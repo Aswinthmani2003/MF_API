@@ -1,0 +1,52 @@
+# .github/workflows/sync.yml
+# ============================================================
+# Automated MFapi → Supabase sync via GitHub Actions
+# Runs daily at 7:30 PM IST (14:00 UTC) — after NSE market close
+# ============================================================
+
+name: Sync Mutual Fund Data
+
+on:
+  schedule:
+    # 14:00 UTC = 7:30 PM IST (Mon–Fri, market days)
+    - cron: "0 14 * * 1-5"
+
+  # Also allow manual trigger from GitHub Actions tab
+  workflow_dispatch:
+    inputs:
+      history_scheme_codes:
+        description: "Comma-separated scheme codes for history sync (optional)"
+        required: false
+        default: ""
+      history_start_date:
+        description: "Start date for history (YYYY-MM-DD, optional)"
+        required: false
+        default: ""
+      history_end_date:
+        description: "End date for history (YYYY-MM-DD, optional)"
+        required: false
+        default: ""
+
+jobs:
+  sync:
+    name: Fetch & Store Mutual Fund Data
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run sync script
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          # Use workflow_dispatch inputs if provided, else fall back to repo-level defaults
+          HISTORY_SCHEME_CODES: ${{ github.event.inputs.history_scheme_codes || vars.HISTORY_SCHEME_CODES }}
+          HISTORY_START_DATE:   ${{ github.event.inputs.history_start_date || '' }}
+          HISTORY_END_DATE:     ${{ github.event.inputs.history_end_date || '' }}
+        run: node sync.js
