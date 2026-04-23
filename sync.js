@@ -11,8 +11,6 @@ const SUPABASE_URL     = process.env.SUPABASE_URL;
 const SUPABASE_KEY     = process.env.SUPABASE_ANON_KEY;
 const MF_BASE          = "https://api.mfapi.in";
 
-// Schemes to pull full history for (comma-separated scheme codes in env)
-// e.g. HISTORY_SCHEME_CODES=125497,100119,120503
 const HISTORY_CODES    = process.env.HISTORY_SCHEME_CODES
   ? process.env.HISTORY_SCHEME_CODES.split(",").map(s => s.trim())
   : [];
@@ -22,7 +20,7 @@ const oneYearAgo       = new Date(Date.now() - 365 * 86400_000).toISOString().sp
 const HISTORY_START    = process.env.HISTORY_START_DATE || oneYearAgo;
 const HISTORY_END      = process.env.HISTORY_END_DATE   || today;
 
-const BATCH_SIZE       = 500; // rows per Supabase upsert batch
+const BATCH_SIZE       = 500;
 
 // ── helpers ────────────────────────────────────────────────
 
@@ -58,7 +56,6 @@ function chunk(arr, size) {
 }
 
 function parseDate(ddMmYyyy) {
-  // "29-12-2023" → "2023-12-29"
   const [d, m, y] = ddMmYyyy.split("-");
   return `${y}-${m}-${d}`;
 }
@@ -88,10 +85,29 @@ async function syncSchemes() {
     await supabaseUpsert("mf_schemes", batch, "scheme_code");
   }
   log(`✅ Synced ${rows.length} schemes → mf_schemes`);
-  return schemes.map(s => s.schemeCode);
+  return schemes;
 }
 
-// ── Step 2: Fetch & store latest NAV for ALL schemes ───────
+// ── Step 2: Sync Scheme_Details ────────────────────────────
+
+async function syncSchemeDetails(schemes) {
+  log("🗂️  Syncing Scheme_Details...");
+
+  const rows = schemes.map(s => ({
+    scheme_code:     s.schemeCode,
+    scheme_name:     s.schemeName,
+    fund_house:      s.fundHouse      ?? null,
+    scheme_type:     s.schemeType     ?? null,
+    scheme_category: s.schemeCategory ?? null,
+  }));
+
+  for (const batch of chunk(rows, BATCH_SIZE)) {
+    await supabaseUpsert("Scheme_Details", batch, "scheme_code");
+  }
+  log(`✅ Synced ${rows.length} records → Scheme_Details`);
+}
+
+// ── Step 3: Fetch & store latest NAV for ALL schemes ───────
 
 async function syncLatestNAV() {
   log("💹 Fetching latest NAV for all schemes...");
@@ -112,7 +128,7 @@ async function syncLatestNAV() {
   log(`✅ Synced ${rows.length} latest NAVs → mf_latest_nav`);
 }
 
-// ── Step 3: Fetch & store NAV history for chosen schemes ───
+// ── Step 4: Fetch & store NAV history for chosen schemes ───
 
 async function syncNavHistory(schemeCodes) {
   if (!schemeCodes.length) {
@@ -145,8 +161,6 @@ async function syncNavHistory(schemeCodes) {
       }
 
       log(`   ✅ ${code} (${json.meta?.scheme_name ?? "?"}) — ${rows.length} rows`);
-
-      // Polite delay to respect rate limiting
       await new Promise(r => setTimeout(r, 200));
     } catch (err) {
       log(`   ❌ Failed for scheme ${code}: ${err.message}`);
@@ -168,7 +182,8 @@ async function main() {
   log(`   Supabase: ${SUPABASE_URL}`);
 
   try {
-    await syncSchemes();
+    const schemes = await syncSchemes();
+    await syncSchemeDetails(schemes);
     await syncLatestNAV();
     await syncNavHistory(HISTORY_CODES);
     log("🎉 All done!");
